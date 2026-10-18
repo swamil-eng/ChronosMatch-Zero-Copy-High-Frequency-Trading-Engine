@@ -1,0 +1,18 @@
+{
+  "backend": "cython",
+  "python": "3.14.6",
+  "machine": "Windows-11-10.0.26200-SP0",
+  "cpu_count": 8,
+  "orders": 300000,
+  "fills": 266669,
+  "orders_per_sec": 4755496,
+  "latency_us": {
+    "p50": 0.19,
+    "p95": 0.48,
+    "p99": 1.15,
+    "max": 47.8,
+    "avg": 0.27
+  },
+  "note": "engine-only submit() latency, histogram lower bounds (~12% resolution)",
+  "when": "2026-10-18"
+}

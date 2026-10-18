@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChronosMatch: a zero-copy matching engine in Python</title>
+<meta name="description" content="Educational high-frequency trading engine: shared-memory ring buffer, Cython order book, live latency dashboard.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<nav class="site-nav" aria-label="Main">
+  <a class="brand" href="/">ChronosMatch</a>
+  <a href="#path">How it works</a><a href="#results">Measurements</a><a href="#plan">Build plan</a><a href="#run">Run it</a>
+  <a class="btn" href="/dashboard">Open dashboard</a>
+</nav>
+
+<header class="hero">
+  <div>
+    <h1>Match orders without serializing a byte.</h1>
+    <p class="lede">Python processes hand orders to each other through shared memory. A C-level order book matches them, so the hot path never pickles an object or stops for the garbage collector.</p>
+    <div class="cta">
+      <button class="btn" id="demo">Start live demo feed</button>
+      <a class="btn ghost" href="/dashboard">Open the full dashboard</a>
+    </div>
+  </div>
+  <div class="live" aria-label="Live engine preview">
+    <div class="top"><span id="liveState">Connecting to the engine</span><span class="num" id="liveOps"></span></div>
+    <canvas class="trace" id="trace" role="img" aria-label="Live latency chart"></canvas>
+    <div class="ladder-head" style="margin-top:8px"><span>Price (₹)</span><span>Quantity</span><span>Cumulative</span></div>
+    <div id="asks"></div>
+    <div class="spread"><span>Spread <b id="spread">–</b></span><span>Trades <b id="trades">0</b></span></div>
+    <div id="bids"></div>
+    <p class="note" id="liveNote">The book is empty. Start the demo feed to watch it fill and clear.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="block" id="path">
+    <h2>The path of one order</h2>
+    <p class="intro">Three things make Python a poor fit for this job: serializing data between processes, garbage-collection pauses, and interpreter overhead in the matching loop. Each stage below removes one of them.</p>
+    <svg class="flow" viewBox="0 0 920 150" role="img" aria-label="Order flow: market simulator writes to a shared-memory ring buffer, the engine reads it, then trades go to the SQLite ledger and the screens.">
+      <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#0c1b2a"/></marker></defs>
+      <g fill="#f6f7f8" stroke="#0c1b2a" stroke-width="1.5">
+        <rect x="4" y="40" width="170" height="70" rx="4"/><rect x="250" y="40" width="190" height="70" rx="4" fill="#d6e6f8" stroke="#0a63c9"/>
+        <rect x="516" y="40" width="170" height="70" rx="4"/><rect x="760" y="10" width="156" height="56" rx="4"/><rect x="760" y="86" width="156" height="56" rx="4"/>
+      </g>
+      <g font-size="15" font-weight="600" text-anchor="middle">
+        <text x="89" y="70">Market simulator</text><text x="345" y="70">Ring buffer</text><text x="601" y="70">Matching engine</text><text x="838" y="43">SQLite ledger</text><text x="838" y="119">Dashboards</text>
+      </g>
+      <g font-size="12.5" text-anchor="middle" fill="#566475">
+        <text x="89" y="92">own process, asyncio</text><text x="345" y="92">mmap, 32-byte records</text><text x="601" y="92">C structs, no GC</text>
+      </g>
+      <g stroke="#0c1b2a" stroke-width="1.5" fill="none" marker-end="url(#ar)">
+        <path d="M176,75 H246"/><path d="M442,75 H512"/><path d="M688,60 L756,40"/><path d="M688,90 L756,112"/>
+      </g>
+    </svg>
+    <div class="steps">
+      <div><h3>Market simulator</h3><p>An asyncio producer in its own process generates buy, sell and cancel orders, including occasional "whale" orders that sweep many price levels.</p><p class="inline"><code>chronosmatch/simulator.py</code></p></div>
+      <div><h3>Ring buffer</h3><p>Producer and consumer map the same file. Each order is 32 bytes written in place with <code>struct.pack_into</code>. Nothing is pickled and no JSON is built.</p><p class="inline"><code>chronosmatch/ringbuffer.py</code></p></div>
+      <div><h3>Matching engine</h3><p>Price-time priority on preallocated order slots and per-price queues. Automatic garbage collection is off while orders match; it runs only between batches, and the dashboard counts any pause that lands inside a match.</p><p class="inline"><code>book_cy.pyx</code>, <code>book_py.py</code></p></div>
+      <div><h3>Ledger and screens</h3><p>A background thread batches every trade into SQLite for audit. The web dashboard and the curses terminal read the same live snapshot.</p><p class="inline"><code>ledger.py</code>, <code>app.py</code></p></div>
+    </div>
+  </section>
+
+  <section class="block" id="results">
+    <h2>What was measured</h2>
+    <p class="intro">These figures come from <code>tools/benchmark.py</code> and <code>tools/ipc_audit.py</code> in this repository, run on the machine listed beneath the tables. Run them on your own hardware before quoting any number.</p>
+    <div class="scroll"><table class="plain" id="resTable"><thead><tr><th>Test</th><th>Result</th></tr></thead><tbody><tr><td colspan="2">Loading measurements…</td></tr></tbody></table></div>
+    <p class="caveat" id="machine"></p>
+    <p class="caveat">Engine latency times only the <code>submit()</code> call. End-to-end latency also includes the time an order waits in the ring buffer, so it grows when the feed outruns the engine. Both appear on the dashboard. The 50 µs goal from the project brief applies to the engine figure.</p>
+  </section>
+
+  <section class="block" id="plan">
+    <h2>Build plan and status</h2>
+    <div class="scroll"><table class="plain">
+      <thead><tr><th>Week</th><th>Low-latency engineering</th><th>Market logic and UI</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>mmap ring buffer with <code>struct</code> records. Done, with tests across two processes.</td><td>asyncio feed into the bus. Done; the rate is adjustable up to 150,000 orders/s and any orders it cannot place are counted as dropped.</td></tr>
+        <tr><td>2</td><td>Limit order book with price-time priority. Written twice: Cython (<code>book_cy.pyx</code>) and pure Python. The Python version is tested against the starter engine; build the Cython version locally to switch to it.</td><td>Terminal dashboard (<code>tools/dashboard_curses.py</code>) and the web dashboard.</td></tr>
+        <tr><td>3</td><td>Allocation-free match path, GC kept out of it, <code>perf_counter_ns</code> timestamps on every order.</td><td>Latency percentiles and live trace.</td></tr>
+        <tr><td>4</td><td>Background SQLite ledger with batched writes.</td><td>Whale orders flagged when one order clears three or more price levels.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="block" id="run">
+    <h2>Run it</h2>
+    <p class="intro">Python 3.10 or newer. Flask is the only required package; Cython is optional.</p>
+<pre class="code">pip install -r requirements.txt
+python app.py                           # website and dashboard at http://127.0.0.1:8000
+python -m unittest discover -s tests -v
+
+# optional: compile the Cython engine (needs a C compiler)
+pip install cython
+python setup.py build_ext --inplace
+
+python tools/benchmark.py               # engine throughput and latency
+python tools/ipc_audit.py               # ring buffer vs multiprocessing.Queue
+python tools/dashboard_curses.py --local   # terminal dashboard</pre>
+  </section>
+</main>
+<footer class="site">Educational simulation. ChronosMatch is not connected to a brokerage or exchange and is not for real trading.</footer>
+<script src="/static/js/common.js"></script>
+<script src="/static/js/landing.js"></script>
+</body>
+</html>
